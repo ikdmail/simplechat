@@ -3,6 +3,8 @@ import json
 import os
 import boto3
 import re  # 正規表現モジュールをインポート
+import urllib.request
+
 from botocore.exceptions import ClientError
 
 
@@ -43,7 +45,7 @@ def lambda_handler(event, context):
         conversation_history = body.get('conversationHistory', [])
         
         print("Processing message:", message)
-        print("Using model:", MODEL_ID)
+        #print("Using model:", MODEL_ID)
         
         # 会話履歴を使用
         messages = conversation_history.copy()
@@ -54,52 +56,44 @@ def lambda_handler(event, context):
             "content": message
         })
         
-        # Nova Liteモデル用のリクエストペイロードを構築
-        # 会話履歴を含める
-        bedrock_messages = []
-        for msg in messages:
-            if msg["role"] == "user":
-                bedrock_messages.append({
-                    "role": "user",
-                    "content": [{"text": msg["content"]}]
-                })
-            elif msg["role"] == "assistant":
-                bedrock_messages.append({
-                    "role": "assistant", 
-                    "content": [{"text": msg["content"]}]
-                })
-        
-        # invoke_model用のリクエストペイロード
-        request_payload = {
-            "messages": bedrock_messages,
-            "inferenceConfig": {
-                "maxTokens": 512,
-                "stopSequences": [],
-                "temperature": 0.7,
-                "topP": 0.9
-            }
+        # FastAPIが公開されているngrokのURL
+        url = 'https://63f5-34-126-140-249.ngrok-free.app/generate'
+
+        # POSTデータの作成
+        data = {
+        "prompt": message,
+        "max_new_tokens": 512,
+        "do_sample": "true",
+        "temperature": 0.7,
+        "top_p": 0.9
         }
-        
-        print("Calling Bedrock invoke_model API with payload:", json.dumps(request_payload))
-        
-        # invoke_model APIを呼び出し
-        response = bedrock_client.invoke_model(
-            modelId=MODEL_ID,
-            body=json.dumps(request_payload),
-            contentType="application/json"
-        )
-        
-        # レスポンスを解析
-        response_body = json.loads(response['body'].read())
-        print("Bedrock response:", json.dumps(response_body, default=str))
-        
-        # 応答の検証
-        if not response_body.get('output') or not response_body['output'].get('message') or not response_body['output']['message'].get('content'):
-            raise Exception("No response content from the model")
-        
-        # アシスタントの応答を取得
-        assistant_response = response_body['output']['message']['content'][0]['text']
-        
+
+        # データをJSONにしてバイト型にエンコード
+        json_data = json.dumps(data).encode("utf-8")
+
+        # ヘッダー設定（Content-Typeを指定）
+        headers = {
+            "Content-Type": "application/json"
+        }
+
+        # リクエスト作成
+        request = urllib.request.Request(url, data=json_data, headers=headers, method="POST")
+
+        # リクエスト送信
+        response = urllib.request.urlopen(request)
+
+        # レスポンスの読み込み（バイト → 文字列へデコード）
+        data = response.read().decode("utf-8")
+
+        # JSONへ変換
+        json_data = json.loads(data)
+
+        # generated_textのみを表示
+        generated_text = json_data.get("generated_text", "回答に失敗しました。")
+
+        # レスポンスへセット
+        assistant_response =  generated_text
+
         # アシスタントの応答を会話履歴に追加
         messages.append({
             "role": "assistant",
@@ -138,3 +132,5 @@ def lambda_handler(event, context):
                 "error": str(error)
             })
         }
+
+
